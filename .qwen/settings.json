@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "ref": {
+      "httpUrl": "https://api.ref.tools/mcp?apiKey=ref-1ef89b5488b7c753687b"
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    }
+  },
+  "$version": 3
+}
