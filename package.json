@@ -9,10 +9,13 @@
   },
   "dependencies": {
     "@elysiajs/static": "^1.4.7",
+    "@neondatabase/serverless": "^1.0.2",
+    "drizzle-orm": "^0.45.2",
     "elysia": "latest"
   },
   "devDependencies": {
     "bun-types": "latest",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.9.3"
   }
 }
