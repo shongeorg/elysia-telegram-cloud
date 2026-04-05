@@ -47,7 +47,6 @@ export const mainController = {
 
     <script>
       const { createApp, ref, onMounted } = Vue;
-      const apiUrl = "https://elysia-telegram-cloude-storage.vercel.app";
 
       createApp({
         setup() {
@@ -57,8 +56,8 @@ export const mainController = {
 
           const fetchFiles = async () => {
             try {
-              const res = await fetch(apiUrl +"/api/files");
-              files.ref = await res.json();
+              const res = await fetch("/api/files");
+              files.value = await res.json();
             } catch (err) {
               console.error("Помилка завантаження:", err);
             } finally {
