@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import { eq, ilike } from "drizzle-orm";
 import { files } from "./schema";
 import { mainRoutes } from "./routes/main";
 import { cors } from "@elysiajs/cors";
@@ -35,6 +36,35 @@ app.get("/api/files", async () => {
   return await db.select().from(files);
 });
 
+app.get("/api/music", async () => {
+  const musicFiles = await db.select().from(files).where(ilike(files.mime_type, "audio/%"));
+  const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+
+  const result = await Promise.all(
+    musicFiles.map(async (file) => {
+      try {
+        const getFileRes = await fetch(
+          `https://api.telegram.org/bot${botToken}/getFile?file_id=${file.tg_file_id}`
+        );
+        const getFileData = await getFileRes.json();
+
+        if (getFileData.ok) {
+          const filePath = getFileData.result.file_path;
+          return {
+            ...file,
+            download_url: `https://api.telegram.org/file/bot${botToken}/${filePath}`,
+          };
+        }
+        return { ...file, download_url: null };
+      } catch {
+        return { ...file, download_url: null };
+      }
+    })
+  );
+
+  return result;
+});
+
 app.post(
   "/api/webhook",
   async ({ body }: { body: any }) => {
@@ -66,6 +96,49 @@ app.post(
   {
     body: t.Object({}, { additionalProperties: true }),
   },
+);
+
+app.get(
+  "/api/download/:id",
+  async ({ params, set }) => {
+    const file = await db
+      .select()
+      .from(files)
+      .where(eq(files.id, params.id))
+      .limit(1);
+
+    if (!file.length) {
+      set.status = 404;
+      return { success: false, error: "File not found" };
+    }
+
+    const tgFile = file[0];
+    const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+
+    const getFileRes = await fetch(
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${tgFile.tg_file_id}`
+    );
+    const getFileData = await getFileRes.json();
+
+    if (!getFileData.ok) {
+      set.status = 500;
+      return { success: false, error: "Telegram getFile failed" };
+    }
+
+    const filePath = getFileData.result.file_path;
+    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+
+    const downloadRes = await fetch(fileUrl);
+    set.headers["Content-Type"] = tgFile.mime_type || "application/octet-stream";
+    set.headers["Content-Disposition"] = `attachment; filename="${tgFile.file_name}"`;
+
+    return downloadRes.body;
+  },
+  {
+    params: t.Object({
+      id: t.String(),
+    }),
+  }
 );
 
 app.onError(({ code, error, set }) => {

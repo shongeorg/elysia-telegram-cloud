@@ -7,7 +7,8 @@ export const mainController = {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Elysia Cloud Storage</title>
+    <title>Elysia Music Player</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>" />
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   </head>
@@ -15,32 +16,22 @@ export const mainController = {
     <div id="app" class="max-w-4xl mx-auto">
       <h2 class="text-2xl font-bold mb-6 text-blue-400">{{ message }}</h2>
 
-      <div v-if="loading" class="text-gray-400">Завантаження файлів...</div>
+      <div v-if="loading" class="text-gray-400">Завантаження...</div>
 
       <div v-else class="grid gap-4">
         <div
-          v-for="file in files"
+          v-for="file in musicFiles"
           :key="file.id"
-          class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex justify-between items-center"
+          class="bg-gray-800 p-4 rounded-lg border border-gray-700"
         >
-          <div>
-            <p class="font-medium text-white">{{ file.file_name }}</p>
-            <p class="text-sm text-gray-400">
-              Size: {{ (file.file_size / 1024 / 1024).toFixed(2) }} MB | Type:
-              {{ file.mime_type }}
-            </p>
-          </div>
-          <a
-            :href="'/api/download/' + file.id"
-            target="_blank"
-            class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded transition"
-          >
-            Download
-          </a>
+          <h3 class="font-medium text-white mb-3">{{ file.file_name }}</h3>
+          <audio controls class="w-full" preload="none">
+            <source :src="file.download_url" :type="file.mime_type" />
+          </audio>
         </div>
 
-        <div v-if="files.length === 0" class="text-gray-500 italic">
-          Файлів поки немає. Скинь щось у канал!
+        <div v-if="musicFiles.length === 0" class="text-gray-500 italic">
+          Музики поки немає. Скинь аудіо у канал!
         </div>
       </div>
     </div>
@@ -50,14 +41,14 @@ export const mainController = {
 
       createApp({
         setup() {
-          const message = ref("My Telegram Cloud");
-          const files = ref([]);
+          const message = ref("🎵 Music Player");
+          const musicFiles = ref([]);
           const loading = ref(true);
 
-          const fetchFiles = async () => {
+          const fetchMusic = async () => {
             try {
-              const res = await fetch("/api/files");
-              files.value = await res.json();
+              const res = await fetch("/api/music");
+              musicFiles.value = await res.json();
             } catch (err) {
               console.error("Помилка завантаження:", err);
             } finally {
@@ -65,11 +56,11 @@ export const mainController = {
             }
           };
 
-          onMounted(fetchFiles);
+          onMounted(fetchMusic);
 
           return {
             message,
-            files,
+            musicFiles,
             loading,
           };
         },
