@@ -8,6 +8,7 @@
     "deploy": "vc deploy --prod"
   },
   "dependencies": {
+    "@elysiajs/static": "^1.4.7",
     "elysia": "latest"
   },
   "devDependencies": {
