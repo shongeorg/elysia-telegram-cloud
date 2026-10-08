@@ -18,7 +18,16 @@ const app = new Elysia();
 
 app.use(
   cors({
-    origin: [DEVELOPMENT_URL, PRODUCTION_URL],
+    origin: [
+      DEVELOPMENT_URL,
+      PRODUCTION_URL,
+      "https://maket-photon.vercel.app",
+      "http://localhost:3333",
+      "http://127.0.0.1:3333",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+    ],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
