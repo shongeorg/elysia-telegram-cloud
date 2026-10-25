@@ -22,11 +22,10 @@ app.use(
       DEVELOPMENT_URL,
       PRODUCTION_URL,
       "https://maket-photon.vercel.app",
-      "http://localhost:3333",
-      "http://127.0.0.1:3333",
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:5175",
+      "https://player-three-nu.vercel.app",
+      /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
+      /^http:\/\/localhost:\d+$/,
+      /^http:\/\/127\.0\.0\.1:\d+$/,
     ],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -46,14 +45,17 @@ app.get("/api/files", async () => {
 });
 
 app.get("/api/music", async () => {
-  const musicFiles = await db.select().from(files).where(ilike(files.mime_type, "audio/%"));
+  const musicFiles = await db
+    .select()
+    .from(files)
+    .where(ilike(files.mime_type, "audio/%"));
   const botToken = process.env.TELEGRAM_BOT_TOKEN!;
 
   const result = await Promise.all(
     musicFiles.map(async (file) => {
       try {
         const getFileRes = await fetch(
-          `https://api.telegram.org/bot${botToken}/getFile?file_id=${file.tg_file_id}`
+          `https://api.telegram.org/bot${botToken}/getFile?file_id=${file.tg_file_id}`,
         );
         const getFileData = await getFileRes.json();
 
@@ -68,7 +70,7 @@ app.get("/api/music", async () => {
       } catch {
         return { ...file, download_url: null };
       }
-    })
+    }),
   );
 
   return result;
@@ -125,7 +127,7 @@ app.get(
     const botToken = process.env.TELEGRAM_BOT_TOKEN!;
 
     const getFileRes = await fetch(
-      `https://api.telegram.org/bot${botToken}/getFile?file_id=${tgFile.tg_file_id}`
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${tgFile.tg_file_id}`,
     );
     const getFileData = await getFileRes.json();
 
@@ -138,8 +140,10 @@ app.get(
     const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
 
     const downloadRes = await fetch(fileUrl);
-    set.headers["Content-Type"] = tgFile.mime_type || "application/octet-stream";
-    set.headers["Content-Disposition"] = `attachment; filename="${tgFile.file_name}"`;
+    set.headers["Content-Type"] =
+      tgFile.mime_type || "application/octet-stream";
+    set.headers["Content-Disposition"] =
+      `attachment; filename="${tgFile.file_name}"`;
 
     return downloadRes.body;
   },
@@ -147,7 +151,7 @@ app.get(
     params: t.Object({
       id: t.String(),
     }),
-  }
+  },
 );
 
 app.onError(({ code, error, set }) => {
