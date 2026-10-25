@@ -34,14 +34,14 @@ PRODUCTION_URL=https://your-app.vercel.app
 DEVELOPMENT_URL=http://localhost:4545
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Local dev server port |
-| `DB_URL` | Neon PostgreSQL connection string |
-| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHANNEL_ID` | Telegram channel ID (must start with `-100`) |
-| `PRODUCTION_URL` | Vercel production URL |
-| `DEVELOPMENT_URL` | Local development URL |
+| Variable              | Description                                         |
+| --------------------- | --------------------------------------------------- |
+| `PORT`                | Local dev server port                               |
+| `DB_URL`              | Neon PostgreSQL connection string                   |
+| `TELEGRAM_BOT_TOKEN`  | Bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHANNEL_ID` | Telegram channel ID (must start with `-100`)        |
+| `PRODUCTION_URL`      | Vercel production URL                               |
+| `DEVELOPMENT_URL`     | Local development URL                               |
 
 #### Getting TELEGRAM_CHANNEL_ID
 
@@ -109,13 +109,13 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
 
 ## API Endpoints
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/` | Music player UI |
-| `GET` | `/api` | API status |
-| `GET` | `/api/files` | All files (JSON) |
-| `GET` | `/api/music` | Audio files with download URLs |
-| `POST` | `/api/webhook` | Telegram webhook handler |
+| Method | Route          | Description                    |
+| ------ | -------------- | ------------------------------ |
+| `GET`  | `/`            | Music player UI                |
+| `GET`  | `/api`         | API status                     |
+| `GET`  | `/api/files`   | All files (JSON)               |
+| `GET`  | `/api/music`   | Audio files with download URLs |
+| `POST` | `/api/webhook` | Telegram webhook handler       |
 
 ## Project Structure
 
