@@ -16,6 +16,10 @@ const db = drizzle(sql);
 const PORT = process.env.PORT!;
 const app = new Elysia();
 
+app.onAfterHandle(({ set }) => {
+  set.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive";
+});
+
 app.use(
   cors({
     origin: [
@@ -33,6 +37,11 @@ app.use(
   }),
 );
 app.use(mainRoutes);
+
+app.get("/robots.txt", ({ set }) => {
+  set.headers["Content-Type"] = "text/plain; charset=utf-8";
+  return "User-agent: *\nDisallow: /\n";
+});
 
 app.get("/api", () => {
   return {
@@ -155,6 +164,8 @@ app.get(
 );
 
 app.onError(({ code, error, set }) => {
+  set.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive";
+
   if (code === "VALIDATION") {
     set.status = 400;
     return {
