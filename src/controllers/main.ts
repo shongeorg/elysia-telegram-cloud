@@ -85,7 +85,7 @@ export const mainController = {
       @keyframes b { 0%, 100% { height: 4px; } 50% { height: 14px; } }
       .name { min-width: 0; }
       .name b { display: block; font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .name span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
+      .name span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .size { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
       .play {
         width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
@@ -112,11 +112,12 @@ export const mainController = {
         width: 48px; height: 48px; border-radius: 12px; flex: 0 0 auto;
         background: linear-gradient(135deg, #2a2140, #14202a);
         display: grid; place-items: center; font-weight: 600; color: #c4b5fd; font-size: 17px;
-        border: 1px solid var(--line);
+        border: 1px solid var(--line); overflow: hidden;
       }
+      .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .now .meta { min-width: 0; flex: 1; }
       .now .meta b { display: block; font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .now .meta span { color: var(--dim); font-size: 11.5px; }
+      .now .meta span { display: block; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .seekwrap { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
       .time { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; width: 36px; }
       .time.right { text-align: right; }
@@ -214,8 +215,8 @@ export const mainController = {
             <template v-else>{{ item.i + 1 }}</template>
           </div>
           <div class="name">
-            <b>{{ cleanName(item.track.file_name) }}</b>
-            <span>{{ item.track.mime_type }}</span>
+            <b>{{ trackTitle(item.track) }}</b>
+            <span>{{ trackSub(item.track) }}</span>
           </div>
           <div class="size">{{ item.track.download_url ? size(item.track.file_size) : 'недоступно' }}</div>
           <button class="play" @click.stop="playAt(item.i)" :disabled="!item.track.download_url">
@@ -236,10 +237,13 @@ export const mainController = {
     <div class="player">
       <div class="player-in">
         <div class="now">
-          <div class="cover">{{ current ? cleanName(current.file_name).charAt(0).toUpperCase() : '♪' }}</div>
+          <div class="cover">
+            <img v-if="coverSrc(current)" :src="coverSrc(current)" alt="" />
+            <template v-else>{{ current ? cleanName(current.file_name).charAt(0).toUpperCase() : '♪' }}</template>
+          </div>
           <div class="meta">
-            <b>{{ current ? cleanName(current.file_name) : 'Нічого не грає' }}</b>
-            <span>{{ current ? (current.mime_type || 'audio') : 'обери трек зі списку' }}</span>
+            <b>{{ current ? trackTitle(current) : 'Нічого не грає' }}</b>
+            <span>{{ current ? trackSub(current) : 'обери трек зі списку' }}</span>
             <div class="seekwrap">
               <span class="time">{{ fmt(currentTime) }}</span>
               <input class="seek" type="range" min="0" :max="duration || 1" step="0.1" :value="currentTime" :style="{ '--p': pct + '%' }" @input="seekTo" />
@@ -332,25 +336,72 @@ export const mainController = {
             return m + ":" + String(sec).padStart(2, "0");
           };
 
+          // --- Теги: підтягуються з /api/tags/:id у момент програвання ---
+          const tagsLoading = new Set();
+
+          const trackTitle = (track) => (track ? track.title || cleanName(track.file_name) : "");
+          const trackSub = (track) => {
+            if (!track) return "";
+            const bits = [];
+            if (track.artist) bits.push(track.artist);
+            if (track.album && track.album !== track.artist) bits.push(track.album);
+            if (track.genre) bits.push(track.genre);
+            if (track.year) bits.push(String(track.year));
+            return bits.length ? bits.join(" · ") : track.mime_type || "audio";
+          };
+          const coverSrc = (track) => (track && track.has_cover ? "/api/cover/" + track.id : "");
+
+          const loadTags = async (i) => {
+            const track = tracks.value[i];
+            if (!track || !track.download_url || track.tags_parsed_at || tagsLoading.has(track.id)) return;
+            tagsLoading.add(track.id);
+            try {
+              const res = await fetch("/api/tags/" + track.id);
+              if (!res.ok) return;
+              const data = await res.json();
+              if (!data || !data.tags) return;
+              // список міг перебудуватись, поки чекали відповідь — шукаємо трек за id
+              const pos = tracks.value.findIndex((t) => t.id === track.id);
+              if (pos === -1) return;
+              tracks.value[pos] = {
+                ...tracks.value[pos],
+                ...data.tags,
+                tags_parsed_at: new Date().toISOString(),
+              };
+              if (pos === index.value) syncMetadata(tracks.value[pos]);
+            } catch {
+              // теги — не критичні: трек грає далі на даних з імені файлу
+            } finally {
+              tagsLoading.delete(track.id);
+            }
+          };
+
           // --- Web Media Session (Android notification / lock screen) ---
           const hasMediaSession = "mediaSession" in navigator;
           const msActions = [
             "play", "pause", "previoustrack", "nexttrack",
             "seekbackward", "seekforward", "seekto",
           ];
-          // Статичний fallback-арт: логотип застосунку (у треків немає поля обкладинки)
+          // Fallback-арт, коли у файлі немає вбудованої обкладинки
           const artUrl =
             "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b5cf6'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath d='M27 41V23l14-4v16' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='23' cy='42' r='5' fill='white'/%3E%3Ccircle cx='37' cy='38' r='5' fill='white'/%3E%3C/svg%3E";
 
           const syncMetadata = (track) => {
             if (!hasMediaSession || !("MediaMetadata" in window) || !track) return;
+            // якщо теги вже прочитані — реальна обкладинка, інакше логотип застосунку
+            const artwork = track.has_cover
+              ? [{
+                  src: new URL("/api/cover/" + track.id, location.origin).href,
+                  sizes: "512x512",
+                  type: track.cover_mime || "image/jpeg",
+                }]
+              : [{ src: artUrl, sizes: "64x64", type: "image/svg+xml" }];
             try {
               navigator.mediaSession.metadata = new MediaMetadata({
-                // у даних треку є лише file_name, тому title — очищена назва файлу
-                title: cleanName(track.file_name),
-                artist: "Cloud Player",
-                album: "Telegram Storage",
-                artwork: [{ src: artUrl, sizes: "64x64", type: "image/svg+xml" }],
+                title: trackTitle(track),
+                artist: track.artist || "Cloud Player",
+                album: track.album || "Telegram Storage",
+                artwork,
               });
             } catch {}
           };
@@ -414,6 +465,7 @@ export const mainController = {
             index.value = i;
             audio.src = track.download_url;
             syncMetadata(track);
+            loadTags(i);
             audio.play().catch(() => {
               playing.value = false;
               error.value = "Не вдалося відтворити. Перевір посилання на файл.";
@@ -564,6 +616,7 @@ export const mainController = {
             currentTime, duration, volume, repeat, shuffle, listEl,
             current, filtered, pct,
             cleanName, size, fmt, playAt, toggle, next, prev, seekTo,
+            trackTitle, trackSub, coverSrc,
           };
         },
       }).mount("#app");

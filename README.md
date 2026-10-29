@@ -107,6 +107,69 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
 3. `GET /api/music` fetches audio files + generates temporary download links via Telegram Bot API
 4. Browser streams audio directly from Telegram servers
 
+## Audio tag extraction (own parser)
+
+Track metadata — title, artist, album, genre, year, duration, bitrate, sample
+rate and cover art — is read by a self-contained parser in
+[`src/tags.ts`](src/tags.ts): pure TypeScript, no dependencies. It replaced the
+`music-metadata` package.
+
+### Why not use a library
+
+`music-metadata` (and its dependency `strtok3`) ships conditional `exports`
+with `node` / `default` branches but **no `bun` branch**:
+
+```json
+"exports": { ".": { "node": "./lib/index.js", "default": "./lib/core.js" } }
+```
+
+For Bun functions Vercel's file tracer `@vercel/nft` runs with
+`conditions: ["bun"]`, so it resolves the `default` branch and bundles
+`core.js`. At runtime Bun resolves `node` → `index.js`, which was never
+bundled → `ResolveMessage` → **500 FUNCTION_INVOCATION_FAILED on every route**.
+Importing `core.js` directly only pushed the problem one level down to
+`strtok3`, which has the exact same split. The only stable fix was to drop the
+library and parse the bytes ourselves, in memory.
+
+### How the bytes are fetched
+
+Telegram sends no CORS headers and files can be large, so bytes are read
+server-side with `Range` requests (`readTagBytes` in [`src/index.ts`](src/index.ts)) —
+the whole file is downloaded only when it is actually needed:
+
+- **MP3 with an ID3v2 tag**: read the 10-byte ID3 header, compute the tag size,
+  then fetch `ID3 tag + 256 KB` of audio — enough for tags, bitrate and duration.
+- **Other formats** (M4A / FLAC / OGG): the metadata block may sit at the *end*
+  (`moov` in MP4), so the whole file is fetched when it is ≤ 16 MB, otherwise
+  the first 1 MB.
+- Caps: tag read ≤ 4 MB, full-file read threshold 16 MB, head read 1 MB.
+
+### Supported formats
+
+| Format          | Container / tags                                                                                       | Cover                                   | Duration / bitrate                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------------------- |
+| MP3             | ID3v2.2 / 2.3 / 2.4 — `TIT2`, `TPE1`, `TALB`, `TCON`, `TYER`/`TDRC`, …                                  | `APIC` / `PIC`                          | MPEG frame header + `Xing`/`Info`/`VBRI`; CBR estimate     |
+| MP4 / M4A       | `moov → udta → meta → ilst` — `©nam`, `©ART`, `©alb`, `©gen`, `gnre`, `©day`                            | `covr` (JPEG/PNG)                       | `mvhd` / `mdhd` + `stsd` sample rate                       |
+| FLAC            | `STREAMINFO`, `VORBIS_COMMENT`                                                                          | `PICTURE` block / `METADATA_BLOCK_PICTURE` | `STREAMINFO` (sample rate, total samples)                  |
+| OGG (Vorbis/Opus) | identification header + comment header (`TITLE`, `ARTIST`, `ALBUM`, `GENRE`, `DATE`)                    | `METADATA_BLOCK_PICTURE`                | nominal bitrate + file size                                |
+
+Text frames are decoded by their declared encoding (Latin-1 / UTF-16 LE/BE /
+UTF-8); ID3 unsynchronisation and unsync/compressed frame flags are handled.
+Numeric genre ids (`(17)`, `17`) are mapped through the standard ID3 genre
+table, and `(3)Dance` is resolved to `Dance`.
+
+### Caching and safety
+
+- The first request parses the file and stores the tags in the `files` row
+  (`tags_parsed_at`); later requests return the cached row and never touch
+  Telegram again.
+- `intOrNull()` guards the integer columns, so a failed parse writes `null` —
+  never `NaN` / `Infinity`, which used to raise
+  `NeonDbError: invalid input syntax for type integer`.
+- Cover art is served from `/api/cover/:id` with a long-lived immutable cache
+  header, so the browser caches it on its own.
+- A parser failure never returns 500: tags are a bonus, the player keeps playing.
+
 ## Media Session controls (Android notification / lock screen)
 
 The player is a plain `new Audio()` instance rendered by Vue 3. The notification
@@ -170,17 +233,19 @@ Rules that matter:
 ```js
 if ("mediaSession" in navigator && "MediaMetadata" in window) {
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: cleanName(track.file_name), // the only real name field in the DB
-    artist: "Cloud Player",            // fallback: tracks have no artist field
-    album: "Telegram Storage",
-    artwork: [{ src: appLogo, sizes: "64x64", type: "image/svg+xml" }],
+    title: track.title || cleanName(track.file_name),
+    artist: track.artist || "Cloud Player",
+    album: track.album || "Telegram Storage",
+    artwork: track.has_cover
+      ? [{ src: `/api/cover/${track.id}`, sizes: "512x512", type: track.cover_mime || "image/jpeg" }]
+      : [{ src: appLogo, sizes: "64x64", type: "image/svg+xml" }],
   });
 }
 ```
 
-Tracks only store `file_name`, `mime_type`, `file_size` and `download_url`, so
-there is nothing to use for a per-track artist or cover — hence the static
-fallback. Never build an artwork URL from unverified data.
+Metadata comes from the parsed tags (see [Audio tag extraction](#audio-tag-extraction-own-parser));
+`file_name` is only a fallback for tracks that have no usable tag. Never build
+an artwork URL from unverified data.
 
 ### 3. Playback state and position
 
@@ -216,13 +281,16 @@ and the system UI — the page can only declare which actions it supports.
 
 ## API Endpoints
 
-| Method | Route          | Description                    |
-| ------ | -------------- | ------------------------------ |
-| `GET`  | `/`            | Music player UI                |
-| `GET`  | `/api`         | API status                     |
-| `GET`  | `/api/files`   | All files (JSON)               |
-| `GET`  | `/api/music`   | Audio files with download URLs |
-| `POST` | `/api/webhook` | Telegram webhook handler       |
+| Method | Route            | Description                            |
+| ------ | ---------------- | -------------------------------------- |
+| `GET`  | `/`              | Music player UI                        |
+| `GET`  | `/api`           | API status                             |
+| `GET`  | `/api/files`     | All files (JSON)                       |
+| `GET`  | `/api/music`     | Audio files with download URLs         |
+| `GET`  | `/api/tags/:id`  | Parsed tags (cached in DB)             |
+| `GET`  | `/api/cover/:id` | Cover art (immutable browser cache)    |
+| `GET`  | `/api/download/:id` | File download                       |
+| `POST` | `/api/webhook`   | Telegram webhook handler               |
 
 ## Project Structure
 
@@ -230,6 +298,7 @@ and the system UI — the page can only declare which actions it supports.
 src/
 ├── index.ts          # Main app entry
 ├── schema.ts         # Drizzle database schema
+├── tags.ts           # Own audio tag parser (no dependencies)
 ├── controllers/
 │   └── main.ts       # Page controller (Vue frontend)
 └── routes/

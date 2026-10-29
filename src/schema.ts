@@ -1,4 +1,12 @@
-import { pgTable, uuid, text, bigint, timestamp } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  uuid,
+  text,
+  bigint,
+  integer,
+  boolean,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 export const files = pgTable("files", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -7,4 +15,17 @@ export const files = pgTable("files", {
   file_size: bigint("file_size", { mode: "number" }),
   mime_type: text("mime_type"),
   created_at: timestamp("created_at").defaultNow(),
+
+  // теги з аудіофайлу — заповнює /api/tags/:id при першому програванні
+  title: text("title"),
+  artist: text("artist"),
+  album: text("album"),
+  genre: text("genre"),
+  year: integer("year"),
+  duration_ms: integer("duration_ms"),
+  bitrate: integer("bitrate"),
+  sample_rate: integer("sample_rate"),
+  has_cover: boolean("has_cover").default(false).notNull(),
+  cover_mime: text("cover_mime"),
+  tags_parsed_at: timestamp("tags_parsed_at"),
 });
