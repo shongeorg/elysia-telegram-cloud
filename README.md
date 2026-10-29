@@ -107,6 +107,113 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
 3. `GET /api/music` fetches audio files + generates temporary download links via Telegram Bot API
 4. Browser streams audio directly from Telegram servers
 
+## Media Session controls (Android notification / lock screen)
+
+The player is a plain `new Audio()` instance rendered by Vue 3. The notification
+card and lock-screen controls come from the native [Web Media Session API](https://developer.mozilla.org/docs/Web/API/Media_Session_API) —
+no extra libraries required. All the code lives in `src/controllers/main.ts`.
+
+As soon as an audio element plays, Android already shows a basic card (title,
+play/pause). The full control set — next/previous, seek buttons, working progress
+bar — appears **only** for the actions the page declares. So every button has to
+be registered by hand.
+
+### 1. Register the action handlers
+
+Handlers must call the *same* functions the on-page buttons use, otherwise the
+web UI and the system card drift apart:
+
+| Media Session action | Player function                    |
+| -------------------- | ---------------------------------- |
+| `play`               | `audio.play()` — only if paused    |
+| `pause`              | `audio.pause()`                    |
+| `previoustrack`      | `prev()`                           |
+| `nexttrack`          | `next()`                           |
+| `seekbackward`       | `seekBy(-offset)`                  |
+| `seekforward`        | `seekBy(+offset)`                  |
+| `seekto`             | `seekTo(details.seekTime)` clamped |
+
+```js
+const handlers = {
+  play: () => { if (audio.src && audio.paused) audio.play().catch(() => {}); },
+  pause: () => { if (!audio.paused) audio.pause(); },
+  previoustrack: () => prev(),
+  nexttrack: () => next(),
+  seekbackward: (d) => seekBy(-((d && d.seekOffset) || 10)),
+  seekforward: (d) => seekBy((d && d.seekOffset) || 10),
+  seekto: (d) => { /* clamp d.seekTime to [0, duration], then set audio.currentTime */ },
+};
+
+// register each action separately: unknown actions throw and must not break the rest
+["play", "pause", "previoustrack", "nexttrack", "seekbackward", "seekforward", "seekto"]
+  .forEach((action) => {
+    try { navigator.mediaSession.setActionHandler(action, handlers[action]); } catch {}
+  });
+```
+
+Rules that matter:
+
+- `play` must **start** playback, not toggle it — a toggle would pause when the
+  system already considers the track as playing.
+- Never start a track without a valid `download_url`.
+- Keep `next`/`prev`/`toggle` in one place; do not reimplement the queue logic
+  inside the handlers.
+- Wrap every `setActionHandler` in its own `try/catch` (older browsers know
+  `mediaSession` but not every action).
+- On unmount call `setActionHandler(action, null)` for each action and clear
+  `navigator.mediaSession.metadata`.
+
+### 2. Track metadata
+
+`navigator.mediaSession.metadata` drives the title/artist/artwork in the card:
+
+```js
+if ("mediaSession" in navigator && "MediaMetadata" in window) {
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: cleanName(track.file_name), // the only real name field in the DB
+    artist: "Cloud Player",            // fallback: tracks have no artist field
+    album: "Telegram Storage",
+    artwork: [{ src: appLogo, sizes: "64x64", type: "image/svg+xml" }],
+  });
+}
+```
+
+Tracks only store `file_name`, `mime_type`, `file_size` and `download_url`, so
+there is nothing to use for a per-track artist or cover — hence the static
+fallback. Never build an artwork URL from unverified data.
+
+### 3. Playback state and position
+
+Sync the card with the real audio element instead of with button clicks:
+
+- `play` / `playing` events → `navigator.mediaSession.playbackState = "playing"`
+- `pause` / `ended` events → `"paused"`, `error` → `"none"`
+- `timeupdate`, `loadedmetadata`, `durationchange`, `seeked` → `setPositionState()`
+
+`setPositionState()` must only be called with sane values, otherwise it throws:
+
+```js
+const d = audio.duration;
+if (!isFinite(d) || d <= 0) return;          // duration unknown → skip
+let pos = Math.min(Math.max(audio.currentTime || 0, 0), d); // clamp to [0, duration]
+navigator.mediaSession.setPositionState({ duration: d, playbackRate: 1, position: pos });
+```
+
+Do not poll with `setInterval` — the audio events above are enough.
+
+### 4. Testing on a phone
+
+1. Open the site in **Chrome on Android** (in-app browsers inside Telegram do not
+   expose the system card) and tap a track — Chrome requires a user gesture to
+   start playback.
+2. Minimise the browser or pull down the notification shade → the card should
+   show the track name plus play/pause, next/previous and seek.
+3. Test play/pause, next/previous and the progress bar from the shade and from
+   the lock screen.
+
+Which buttons are actually rendered still depends on the Chrome/Android version
+and the system UI — the page can only declare which actions it supports.
+
 ## API Endpoints
 
 | Method | Route          | Description                    |
