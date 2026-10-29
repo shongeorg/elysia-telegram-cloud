@@ -193,7 +193,7 @@ export const mainController = {
         <div class="count" v-if="!loading">{{ filtered.length }} / {{ tracks.length }}</div>
       </div>
 
-      <div class="list">
+      <div class="list" ref="listEl">
         <template v-if="loading">
           <div class="skeleton" v-for="n in 5" :key="n"></div>
         </template>
@@ -202,6 +202,7 @@ export const mainController = {
           v-else
           v-for="item in filtered"
           :key="item.track.id"
+          :data-row="item.i"
           class="row"
           :class="{ active: item.i === index, dead: !item.track.download_url }"
           @click="playAt(item.i)"
@@ -275,7 +276,7 @@ export const mainController = {
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script>
-      const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
+      const { createApp, ref, computed, watch, nextTick, onMounted, onUnmounted } = Vue;
 
       createApp({
         setup() {
@@ -290,6 +291,7 @@ export const mainController = {
           const volume = ref(0.8);
           const repeat = ref(false);
           const shuffle = ref(false);
+          const listEl = ref(null);
 
           const audio = new Audio();
           audio.preload = "metadata";
@@ -302,6 +304,17 @@ export const mainController = {
               .filter(({ track }) => !q || (track.file_name || "").toLowerCase().includes(q));
           });
           const pct = computed(() => (duration.value ? (currentTime.value / duration.value) * 100 : 0));
+
+          const scrollToActive = () => {
+            const container = listEl.value;
+            if (!container || index.value < 0) return;
+            const row = container.querySelector('[data-row="' + index.value + '"]');
+            if (row && typeof row.scrollIntoView === "function") {
+              row.scrollIntoView({ block: "center", behavior: "smooth" });
+            }
+          };
+
+          watch(index, () => nextTick(scrollToActive));
 
           const cleanName = (name) =>
             (name || "Без назви")
@@ -548,7 +561,7 @@ export const mainController = {
 
           return {
             tracks, loading, error, query, index, playing,
-            currentTime, duration, volume, repeat, shuffle,
+            currentTime, duration, volume, repeat, shuffle, listEl,
             current, filtered, pct,
             cleanName, size, fmt, playAt, toggle, next, prev, seekTo,
           };
