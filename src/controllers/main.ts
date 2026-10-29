@@ -275,7 +275,7 @@ export const mainController = {
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script>
-      const { createApp, ref, computed, watch, onMounted } = Vue;
+      const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
 
       createApp({
         setup() {
@@ -319,24 +319,93 @@ export const mainController = {
             return m + ":" + String(sec).padStart(2, "0");
           };
 
+          // --- Web Media Session (Android notification / lock screen) ---
+          const hasMediaSession = "mediaSession" in navigator;
+          const msActions = [
+            "play", "pause", "previoustrack", "nexttrack",
+            "seekbackward", "seekforward", "seekto",
+          ];
+          // Статичний fallback-арт: логотип застосунку (у треків немає поля обкладинки)
+          const artUrl =
+            "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b5cf6'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath d='M27 41V23l14-4v16' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='23' cy='42' r='5' fill='white'/%3E%3Ccircle cx='37' cy='38' r='5' fill='white'/%3E%3C/svg%3E";
+
+          const syncMetadata = (track) => {
+            if (!hasMediaSession || !("MediaMetadata" in window) || !track) return;
+            try {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                // у даних треку є лише file_name, тому title — очищена назва файлу
+                title: cleanName(track.file_name),
+                artist: "Cloud Player",
+                album: "Telegram Storage",
+                artwork: [{ src: artUrl, sizes: "64x64", type: "image/svg+xml" }],
+              });
+            } catch {}
+          };
+
+          const setPlaybackState = (state) => {
+            if (!hasMediaSession) return;
+            try { navigator.mediaSession.playbackState = state; } catch {}
+          };
+
+          const updatePositionState = () => {
+            if (!hasMediaSession || typeof navigator.mediaSession.setPositionState !== "function") return;
+            const d = audio.duration;
+            if (!isFinite(d) || d <= 0) return;
+            let pos = audio.currentTime;
+            if (!isFinite(pos) || pos < 0) pos = 0;
+            if (pos > d) pos = d;
+            const rate = isFinite(audio.playbackRate) && audio.playbackRate > 0 ? audio.playbackRate : 1;
+            try {
+              navigator.mediaSession.setPositionState({ duration: d, playbackRate: rate, position: pos });
+            } catch {}
+          };
+
+          const seekBy = (offset) => {
+            const d = audio.duration;
+            if (!isFinite(d) || d <= 0) return;
+            audio.currentTime = Math.min(Math.max(audio.currentTime + offset, 0), d);
+            currentTime.value = audio.currentTime;
+            updatePositionState();
+          };
+
+          const registerMediaHandlers = () => {
+            if (!hasMediaSession || typeof navigator.mediaSession.setActionHandler !== "function") return;
+            // використовують ті самі функції плеєра, що й кнопки інтерфейсу
+            const handlers = {
+              play: () => { if (audio.src && audio.paused) audio.play().catch(() => {}); },
+              pause: () => { if (!audio.paused) audio.pause(); },
+              previoustrack: () => prev(),
+              nexttrack: () => next(),
+              seekbackward: (d) => seekBy(-((d && d.seekOffset) || 10)),
+              seekforward: (d) => seekBy((d && d.seekOffset) || 10),
+              seekto: (d) => {
+                if (!d || typeof d.seekTime !== "number" || !isFinite(d.seekTime)) return;
+                const dur = audio.duration;
+                let t = d.seekTime;
+                if (isFinite(dur) && dur > 0) t = Math.min(Math.max(t, 0), dur);
+                if (t < 0) t = 0;
+                audio.currentTime = t;
+                currentTime.value = t;
+                updatePositionState();
+              },
+            };
+            msActions.forEach((action) => {
+              try { navigator.mediaSession.setActionHandler(action, handlers[action]); } catch {}
+            });
+          };
+
           const playAt = (i) => {
             const track = tracks.value[i];
             if (!track || !track.download_url) return;
             if (i === index.value) return toggle();
             index.value = i;
             audio.src = track.download_url;
+            syncMetadata(track);
             audio.play().catch(() => {
               playing.value = false;
               error.value = "Не вдалося відтворити. Перевір посилання на файл.";
               setTimeout(() => (error.value = ""), 4000);
             });
-            if ("mediaSession" in navigator) {
-              navigator.mediaSession.metadata = new MediaMetadata({
-                title: cleanName(track.file_name),
-                artist: "Cloud Player",
-                album: "Telegram Storage",
-              });
-            }
           };
 
           const toggle = () => {
@@ -373,23 +442,54 @@ export const mainController = {
             if (isFinite(audio.duration)) audio.currentTime = t;
           };
 
-          audio.addEventListener("play", () => (playing.value = true));
-          audio.addEventListener("pause", () => (playing.value = false));
-          audio.addEventListener("timeupdate", () => (currentTime.value = audio.currentTime));
-          audio.addEventListener("loadedmetadata", () => (duration.value = audio.duration || 0));
-          audio.addEventListener("ended", () => {
+          const onAudioPlay = () => {
+            playing.value = true;
+            setPlaybackState("playing");
+            updatePositionState();
+          };
+          const onAudioPlaying = () => setPlaybackState("playing");
+          const onAudioPause = () => {
+            playing.value = false;
+            setPlaybackState("paused");
+            updatePositionState();
+          };
+          const onAudioTimeUpdate = () => {
+            currentTime.value = audio.currentTime;
+            updatePositionState();
+          };
+          const onAudioDuration = () => {
+            duration.value = audio.duration || 0;
+            updatePositionState();
+          };
+          const onAudioSeeked = () => {
+            currentTime.value = audio.currentTime;
+            updatePositionState();
+          };
+          const onAudioEnded = () => {
+            setPlaybackState("paused");
             if (repeat.value) {
               audio.currentTime = 0;
               audio.play().catch(() => {});
             } else next();
-          });
-          audio.addEventListener("error", () => {
+          };
+          const onAudioError = () => {
             playing.value = false;
+            setPlaybackState("none");
             if (current.value) {
               error.value = "Помилка файлу: Telegram не віддав аудіо.";
               setTimeout(() => (error.value = ""), 4000);
             }
-          });
+          };
+
+          audio.addEventListener("play", onAudioPlay);
+          audio.addEventListener("playing", onAudioPlaying);
+          audio.addEventListener("pause", onAudioPause);
+          audio.addEventListener("timeupdate", onAudioTimeUpdate);
+          audio.addEventListener("loadedmetadata", onAudioDuration);
+          audio.addEventListener("durationchange", onAudioDuration);
+          audio.addEventListener("seeked", onAudioSeeked);
+          audio.addEventListener("ended", onAudioEnded);
+          audio.addEventListener("error", onAudioError);
 
           watch(volume, (v) => {
             audio.volume = v;
@@ -400,8 +500,8 @@ export const mainController = {
             const tag = (e.target.tagName || "").toLowerCase();
             if (tag === "input" || tag === "textarea") return;
             if (e.code === "Space") { e.preventDefault(); toggle(); }
-            if (e.code === "ArrowRight") audio.currentTime = Math.min(audio.currentTime + 5, duration.value || 0);
-            if (e.code === "ArrowLeft") audio.currentTime = Math.max(audio.currentTime - 5, 0);
+            if (e.code === "ArrowRight") seekBy(5);
+            if (e.code === "ArrowLeft") seekBy(-5);
             if (e.code === "KeyN") next();
             if (e.code === "KeyP") prev();
           };
@@ -411,6 +511,7 @@ export const mainController = {
             if (isFinite(saved) && saved >= 0 && saved <= 1) volume.value = saved;
             audio.volume = volume.value;
             window.addEventListener("keydown", onKey);
+            registerMediaHandlers();
 
             try {
               const res = await fetch("/api/music");
@@ -422,6 +523,26 @@ export const mainController = {
               setTimeout(() => (error.value = ""), 5000);
             } finally {
               loading.value = false;
+            }
+          });
+
+          onUnmounted(() => {
+            window.removeEventListener("keydown", onKey);
+            audio.pause();
+            audio.removeEventListener("play", onAudioPlay);
+            audio.removeEventListener("playing", onAudioPlaying);
+            audio.removeEventListener("pause", onAudioPause);
+            audio.removeEventListener("timeupdate", onAudioTimeUpdate);
+            audio.removeEventListener("loadedmetadata", onAudioDuration);
+            audio.removeEventListener("durationchange", onAudioDuration);
+            audio.removeEventListener("seeked", onAudioSeeked);
+            audio.removeEventListener("ended", onAudioEnded);
+            audio.removeEventListener("error", onAudioError);
+            if (hasMediaSession && typeof navigator.mediaSession.setActionHandler === "function") {
+              msActions.forEach((action) => {
+                try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+              });
+              try { navigator.mediaSession.metadata = null; } catch {}
             }
           });
 
